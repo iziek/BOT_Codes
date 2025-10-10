@@ -1,0 +1,150 @@
+// Motor pins
+const int motorLeftForward = A0;
+const int motorLeftBackward = A1;
+const int motorRightForward = A2;
+const int motorRightBackward = A3;
+
+// IR sensor pins (rightmost to leftmost)
+const int sensorPins[5] = {2, 3, 4, 5, 6};
+
+const int baseSpeed = 150;
+const int maxSpeed = 255;
+
+float Kp = 35.0;
+float Ki = 0.0;
+float Kd = 70.0;
+
+int lastError = 0;
+int integral = 0;
+
+unsigned long allBlackStartTime = 0;
+bool allBlackTimerRunning = false;
+
+unsigned long blindspotStartTime = 0;
+bool inBlindspot = false;
+const unsigned long blindspotTolerance = 400; // ms to tolerate line absence
+
+// Previous motor speeds
+int prevLeftSpeed = baseSpeed;
+int prevRightSpeed = baseSpeed;
+
+void setup() {
+  pinMode(motorLeftForward, OUTPUT);
+  pinMode(motorLeftBackward, OUTPUT);
+  pinMode(motorRightForward, OUTPUT);
+  pinMode(motorRightBackward, OUTPUT);
+
+  for (int i = 0; i < 5; i++) pinMode(sensorPins[i], INPUT);
+
+  delay(2000);
+}
+
+void stopMotors() {
+  analogWrite(motorLeftForward, 0);
+  analogWrite(motorLeftBackward, 0);
+  analogWrite(motorRightForward, 0);
+  analogWrite(motorRightBackward, 0);
+
+  integral = 0;
+  lastError = 0;
+  inBlindspot = false;
+  blindspotStartTime = 0;
+}
+
+void setMotorSpeed(int leftSpeed, int rightSpeed) {
+  leftSpeed = constrain(leftSpeed, 0, maxSpeed);
+  rightSpeed = constrain(rightSpeed, 0, maxSpeed);
+
+  analogWrite(motorLeftForward, leftSpeed);
+  analogWrite(motorLeftBackward, 0);
+  analogWrite(motorRightForward, rightSpeed);
+  analogWrite(motorRightBackward, 0);
+
+  prevLeftSpeed = leftSpeed;
+  prevRightSpeed = rightSpeed;
+}
+
+int readLineSensors() {
+  int weights[5] = {-3, -1, 0, 1, 3};
+  int error = 0;
+  int sum = 0;
+  for (int i = 0; i < 5; i++) {
+    // Fix: LOW means white line detected, HIGH means black ground
+    bool detected = digitalRead(sensorPins[i]) == LOW;
+    if (detected) {
+      error += weights[i];
+      sum++;
+    }
+  }
+  if (sum == 0) return lastError;
+  return error / sum;
+}
+
+void loop() {
+  bool allWhite = true;
+  bool allBlack = true;
+
+  for (int i = 0; i < 5; i++) {
+    bool val = digitalRead(sensorPins[i]);
+    if (val) allBlack = false;  // val HIGH means black ground under sensor
+    else allWhite = false;       // val LOW means white line under sensor
+  }
+
+  unsigned long currentTime = millis();
+
+  // Fix: all white means all sensors LOW (line), so start moving
+  if (allWhite) {
+    if (!inBlindspot) {
+      inBlindspot = true;
+      blindspotStartTime = currentTime;
+    }
+
+    if (currentTime - blindspotStartTime < blindspotTolerance) {
+      analogWrite(motorLeftForward, prevLeftSpeed);
+      analogWrite(motorLeftBackward, 0);
+      analogWrite(motorRightForward, prevRightSpeed);
+      analogWrite(motorRightBackward, 0);
+      return;
+    } else {
+      stopMotors();
+      allBlackTimerRunning = false;
+      inBlindspot = false;
+      return;
+    }
+  } else {
+    inBlindspot = false;
+  }
+
+  // Fix: all black means all sensors HIGH, stop motors
+  if (allBlack) {
+    if (!allBlackTimerRunning) {
+      allBlackStartTime = currentTime;
+      allBlackTimerRunning = true;
+      stopMotors();
+      integral = 0;
+      lastError = 0;
+      return;
+    } else {
+      if (currentTime - allBlackStartTime >= 500) {
+        stopMotors();
+        allBlackTimerRunning = false;
+      }
+      return;
+    }
+  } else {
+    allBlackTimerRunning = false;
+  }
+
+  int error = readLineSensors();
+
+  integral += error;
+  int derivative = error - lastError;
+  lastError = error;
+
+  float correction = Kp * error + Ki * integral + Kd * derivative;
+
+  int leftSpeed = baseSpeed - correction;
+  int rightSpeed = baseSpeed + correction;
+
+  setMotorSpeed(leftSpeed, rightSpeed);
+}
