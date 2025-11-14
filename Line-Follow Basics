@@ -1,0 +1,93 @@
+// Pin setup and helpers remain unchanged
+const int motorLeftForward = A2;
+const int motorLeftBackward = A3;
+const int motorRightForward = A0;
+const int motorRightBackward = A1;
+const int sensorPins[5] = {2, 3, 4, 5, 6};
+
+void setup() {
+  pinMode(motorLeftForward, OUTPUT);
+  pinMode(motorLeftBackward, OUTPUT);
+  pinMode(motorRightForward, OUTPUT);
+  pinMode(motorRightBackward, OUTPUT);
+  for (int i = 0; i < 5; i++) pinMode(sensorPins[i], INPUT);
+  delay(2000);
+}
+
+void stopMotors() {
+  digitalWrite(motorLeftForward, LOW);
+  digitalWrite(motorLeftBackward, LOW);
+  digitalWrite(motorRightForward, LOW);
+  digitalWrite(motorRightBackward, LOW);
+}
+
+void leftMotorForward() {
+  digitalWrite(motorLeftForward, HIGH);
+  digitalWrite(motorLeftBackward, LOW);
+}
+
+void leftMotorStop() {
+  digitalWrite(motorLeftForward, LOW);
+  digitalWrite(motorLeftBackward, LOW);
+}
+
+void leftMotorBack() {
+  digitalWrite(motorLeftForward, LOW);
+  digitalWrite(motorLeftBackward, HIGH);
+}
+
+void rightMotorForward() {
+  digitalWrite(motorRightForward, HIGH);
+  digitalWrite(motorRightBackward, LOW);
+}
+
+void rightMotorStop() {
+  digitalWrite(motorRightForward, LOW);
+  digitalWrite(motorRightBackward, LOW);
+}
+
+void rightMotorBack() {
+  digitalWrite(motorRightForward, LOW);
+  digitalWrite(motorRightBackward, HIGH);
+
+
+}
+
+void loop() {
+  bool s[5];
+  for (int i = 0; i < 5; i++) {
+    s[i] = (digitalRead(sensorPins[i]) == LOW); // Line present if LOW
+  }
+
+  stopMotors();
+
+  // HARD LEFT: sensor 1
+  if (s[0]) {
+    leftMotorBack();
+    rightMotorForward();
+  }
+
+  // SOFT LEFT: sensor 2
+  if (s[1]) {
+    leftMotorStop();
+    rightMotorForward();
+  }
+
+  // FORWARD: sensor 3
+  if (s[2]) {
+    leftMotorForward();
+    rightMotorForward();
+  }
+
+  // SOFT RIGHT: sensor 4
+  if (s[3]) {
+    leftMotorForward();
+    rightMotorStop();
+  }
+
+  // HARD RIGHT: sensor 5
+  if (s[4]) {
+    leftMotorForward();
+    rightMotorBack();
+  }
+}
