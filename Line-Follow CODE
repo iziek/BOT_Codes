@@ -3,43 +3,28 @@ const int motorLeftForward = A0;
 const int motorLeftBackward = A1;
 const int motorRightForward = A2;
 const int motorRightBackward = A3;
+const int pwmLeft = 9;    // ENA pin on L298N for left motor speed
+const int pwmRight = 10;  // ENB pin on L298N for right motor speed
 
 // IR sensor pins (rightmost to leftmost)
 const int sensorPins[5] = {2, 3, 4, 5, 6};
 
-const int baseSpeed = 150;
-const int maxSpeed = 200;
+const int baseSpeed = 50;    // Base PWM speed (0-255)
+const int maxSpeed = 155;
 
-float Kp = 25.0;
+float Kp = 35.0;
 float Ki = 0.0;
-float Kd = 500.0;
+float Kd = 50.0;
 
 int lastError = 0;
 int integral = 0;
-
-unsigned long allBlackStartTime = 0;
-bool allBlackTimerRunning = false;
-
-unsigned long blindspotStartTime = 0;
-bool inBlindspot = false;
-const unsigned long blindspotTolerance = 400; // ms to tolerate line absence
-
-// Previous motor speeds
-int prevLeftSpeed = baseSpeed;
-int prevRightSpeed = baseSpeed;
-
-// Sharp turn timing
-unsigned long sharpTurnStartTime = 0;
-const unsigned long sharpTurnDuration = 50;  // milliseconds to hold sharp turn
 
 void setup() {
   pinMode(motorLeftForward, OUTPUT);
   pinMode(motorLeftBackward, OUTPUT);
   pinMode(motorRightForward, OUTPUT);
   pinMode(motorRightBackward, OUTPUT);
-
   for (int i = 0; i < 5; i++) pinMode(sensorPins[i], INPUT);
-
   delay(2000);
 }
 
@@ -48,130 +33,48 @@ void stopMotors() {
   analogWrite(motorLeftBackward, 0);
   analogWrite(motorRightForward, 0);
   analogWrite(motorRightBackward, 0);
-
   integral = 0;
   lastError = 0;
-  inBlindspot = false;
-  blindspotStartTime = 0;
-  sharpTurnStartTime = 0;
-}
-
-void setMotorSpeed(int leftSpeed, int rightSpeed) {
-  leftSpeed = constrain(leftSpeed, 0, maxSpeed);
-  rightSpeed = constrain(rightSpeed, 0, maxSpeed);
-
-  analogWrite(motorLeftForward, leftSpeed);
-  analogWrite(motorLeftBackward, 0);
-  analogWrite(motorRightForward, rightSpeed);
-  analogWrite(motorRightBackward, 0);
-
-  prevLeftSpeed = leftSpeed;
-  prevRightSpeed = rightSpeed;
 }
 
 int readLineSensors() {
   int weights[5] = {-3, -1, 0, 1, 3};
   int error = 0;
-  int sum = 0;
+  int count = 0;
   for (int i = 0; i < 5; i++) {
-    bool detected = digitalRead(sensorPins[i]) == LOW;
-    if (detected) {
+    bool onLine = (digitalRead(sensorPins[i]) == LOW);
+    if (onLine) {
       error += weights[i];
-      sum++;
+      count++;
     }
   }
-  if (sum == 0) return lastError;
-  return error / sum;
+  if (count == 0) return lastError;  // If no line detected, continue using last error
+  return error / count;
+}
+
+void setLeftMotor(int speed) {
+  speed = constrain(speed, -maxSpeed, maxSpeed);
+  if (speed >= 0) {
+    analogWrite(motorLeftForward, speed);
+    analogWrite(motorLeftBackward, 0);
+  } else {
+    analogWrite(motorLeftForward, 0);
+    analogWrite(motorLeftBackward, -speed);
+  }
+}
+
+void setRightMotor(int speed) {
+  speed = constrain(speed, -maxSpeed, maxSpeed);
+  if (speed >= 0) {
+    analogWrite(motorRightForward, speed);
+    analogWrite(motorRightBackward, 0);
+  } else {
+    analogWrite(motorRightForward, 0);
+    analogWrite(motorRightBackward, -speed);
+  }
 }
 
 void loop() {
-  bool allWhite = true;
-  bool allBlack = true;
-
-  for (int i = 0; i < 5; i++) {
-    bool val = digitalRead(sensorPins[i]);
-    if (val) allBlack = false;
-    else allWhite = false;
-  }
-
-  unsigned long currentTime = millis();
-
-  // Hold ongoing sharp turn for duration
-  if (sharpTurnStartTime > 0) {
-    if (currentTime - sharpTurnStartTime < sharpTurnDuration) {
-      // Continue last sharp turn motor command (motors previously set)
-      return;
-    } else {
-      sharpTurnStartTime = 0; // Clear timer after delay
-    }
-  }
-
-  if (allWhite) {
-    if (!inBlindspot) {
-      inBlindspot = true;
-      blindspotStartTime = currentTime;
-    }
-
-    if (currentTime - blindspotStartTime < blindspotTolerance) {
-      analogWrite(motorLeftForward, prevLeftSpeed);
-      analogWrite(motorLeftBackward, 0);
-      analogWrite(motorRightForward, prevRightSpeed);
-      analogWrite(motorRightBackward, 0);
-      return;
-    } else {
-      stopMotors();
-      allBlackTimerRunning = false;
-      inBlindspot = false;
-      return;
-    }
-  } else {
-    inBlindspot = false;
-  }
-
-  if (allBlack) {
-    if (!allBlackTimerRunning) {
-      allBlackStartTime = currentTime;
-      allBlackTimerRunning = true;
-      stopMotors();
-      integral = 0;
-      lastError = 0;
-      return;
-    } else {
-      if (currentTime - allBlackStartTime >= 500) {
-        stopMotors();
-        allBlackTimerRunning = false;
-      }
-      return;
-    }
-  } else {
-    allBlackTimerRunning = false;
-  }
-
-  bool sensorVals[5];
-  for (int i = 0; i < 5; i++) {
-    sensorVals[i] = (digitalRead(sensorPins[i]) == LOW);
-  }
-
-  // Sharp turn left (sensors 1 and 2)
-  if (sensorVals[0] && sensorVals[1] && !sensorVals[2] && !sensorVals[3] && !sensorVals[4]) {
-    analogWrite(motorLeftForward, baseSpeed);
-    analogWrite(motorLeftBackward, 0);
-    analogWrite(motorRightForward, 0);
-    analogWrite(motorRightBackward, baseSpeed);
-    sharpTurnStartTime = currentTime;
-    return;
-  }
-
-  // Sharp turn right (sensors 4 and 5)
-  if (!sensorVals[0] && !sensorVals[1] && !sensorVals[2] && sensorVals[3] && sensorVals[4]) {
-    analogWrite(motorLeftForward, 0);
-    analogWrite(motorLeftBackward, baseSpeed);
-    analogWrite(motorRightForward, baseSpeed);
-    analogWrite(motorRightBackward, 0);
-    sharpTurnStartTime = currentTime;
-    return;
-  }
-
   int error = readLineSensors();
 
   integral += error;
@@ -183,5 +86,6 @@ void loop() {
   int leftSpeed = baseSpeed - correction;
   int rightSpeed = baseSpeed + correction;
 
-  setMotorSpeed(leftSpeed, rightSpeed);
+  setLeftMotor(leftSpeed);
+  setRightMotor(rightSpeed);
 }
