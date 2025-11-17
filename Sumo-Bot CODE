@@ -1,1 +1,113 @@
+// Motor pins
+const int motorLeftForward = A0;
+const int motorLeftBackward = A1;
+const int motorRightForward = A2;
+const int motorRightBackward = A3;
+const int pwmLeft = 9;
+const int pwmRight = 10;
 
+// Ultrasonic sensor pins
+const int trigPin = 12;
+const int echoPin = 13;
+
+// Motor speed settings
+const int baseSpeed = 120;        // Speed for turning in place during oscillation
+const int attackSpeed = 255;      // Full speed attack
+
+// Ultrasonic detection distance (cm)
+const int opponentDistanceThreshold = 60; // ~12 inches
+
+// Oscillation variables
+bool turnLeft = true;
+unsigned long lastTurnTime = 0;
+const unsigned long turnInterval = 500; // 1.5 seconds per turn
+
+void setup() {
+  pinMode(motorLeftForward, OUTPUT);
+  pinMode(motorLeftBackward, OUTPUT);
+  pinMode(motorRightForward, OUTPUT);
+  pinMode(motorRightBackward, OUTPUT);
+  pinMode(pwmLeft, OUTPUT);
+  pinMode(pwmRight, OUTPUT);
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  Serial.begin(9600);
+}
+
+void setLeftMotor(int speed) {
+  if (speed > 0) {
+    analogWrite(pwmLeft, speed);
+    digitalWrite(motorLeftForward, HIGH);
+    digitalWrite(motorLeftBackward, LOW);
+  } else if (speed < 0) {
+    analogWrite(pwmLeft, -speed);
+    digitalWrite(motorLeftForward, LOW);
+    digitalWrite(motorLeftBackward, HIGH);
+  } else {
+    analogWrite(pwmLeft, 0);
+    digitalWrite(motorLeftForward, LOW);
+    digitalWrite(motorLeftBackward, LOW);
+  }
+}
+
+void setRightMotor(int speed) {
+  if (speed > 0) {
+    analogWrite(pwmRight, speed);
+    digitalWrite(motorRightForward, HIGH);
+    digitalWrite(motorRightBackward, LOW);
+  } else if (speed < 0) {
+    analogWrite(pwmRight, -speed);
+    digitalWrite(motorRightForward, LOW);
+    digitalWrite(motorRightBackward, HIGH);
+  } else {
+    analogWrite(pwmRight, 0);
+    digitalWrite(motorRightForward, LOW);
+    digitalWrite(motorRightBackward, LOW);
+  }
+}
+
+// Read ultrasonic distance in cm
+long readUltrasonicDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
+  long distance = duration * 0.034 / 2; // cm
+  return distance;
+}
+
+void loop() {
+  long distance = readUltrasonicDistance();
+
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+  if (distance > 0 && distance <= opponentDistanceThreshold) {
+    // Enemy detected - move forward aggressively
+    Serial.println("Enemy detected - attacking");
+    setLeftMotor(attackSpeed);
+    setRightMotor(attackSpeed);
+    turnLeft = true; // reset oscillation direction
+  } else {
+    // No enemy detected - oscillate in place left and right
+    unsigned long currentTime = millis();
+    if (currentTime - lastTurnTime >= turnInterval) {
+      turnLeft = !turnLeft;
+      lastTurnTime = currentTime;
+    }
+    if (turnLeft) {
+      setLeftMotor(baseSpeed);
+      setRightMotor(-baseSpeed);
+    } else {
+      setLeftMotor(-baseSpeed);
+      setRightMotor(baseSpeed);
+    }
+  }
+
+  delay(50);
+}
