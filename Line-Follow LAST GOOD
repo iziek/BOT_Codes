@@ -1,0 +1,142 @@
+// ==== Motor Pins ====
+const int motorLeftForward = A0;
+const int motorLeftBackward = A1;
+const int motorRightForward = A2;
+const int motorRightBackward = A3;
+const int pwmLeft = 9;
+const int pwmRight = 10;
+
+// ==== IR Sensors ====
+const int sensorPins[5] = {2, 3, 4, 5, 6};
+const int sensorWeights[5] = {-4, -2, 0, 2, 4};
+
+// ==== Motor Settings ====
+const int baseSpeed = 120;
+
+// ==== PID Variables ====
+float Kp = 40.0;
+float Ki = 0.0;
+float Kd = 20.0;
+
+float lastError = 0;
+float integral = 0;
+unsigned long lastTime = 0;
+
+// ==== Last Move Tracking ====
+enum MoveType {FORWARD, SOFT_LEFT, SOFT_RIGHT, HARD_LEFT, HARD_RIGHT, PIVOT_LEFT, PIVOT_RIGHT};
+MoveType lastMove = FORWARD;
+
+// ===================== SETUP =====================
+void setup() {
+  pinMode(motorLeftForward, OUTPUT);
+  pinMode(motorLeftBackward, OUTPUT);
+  pinMode(motorRightForward, OUTPUT);
+  pinMode(motorRightBackward, OUTPUT);
+  pinMode(pwmLeft, OUTPUT);
+  pinMode(pwmRight, OUTPUT);
+
+  for (int i = 0; i < 5; i++) pinMode(sensorPins[i], INPUT);
+
+  Serial.begin(9600);
+  lastTime = millis();
+}
+
+// ================== MOTOR FUNCTIONS ==================
+void setLeftMotor(int speed) {
+  int s = constrain(abs(speed), 0, 255);
+  analogWrite(pwmLeft, s);
+  digitalWrite(motorLeftForward, speed > 0);
+  digitalWrite(motorLeftBackward, speed < 0);
+}
+
+void setRightMotor(int speed) {
+  int s = constrain(abs(speed), 0, 255);
+  analogWrite(pwmRight, s);
+  digitalWrite(motorRightForward, speed > 0);
+  digitalWrite(motorRightBackward, speed < 0);
+}
+
+// ======================= LOOP =======================
+void loop() {
+  int sensor[5];
+  int detected = 0;
+  int posSum = 0;
+
+  for (int i = 0; i < 5; i++) {
+    sensor[i] = (digitalRead(sensorPins[i]) == LOW) ? 1 : 0; // LOW = line detected
+    if (sensor[i]) {
+      detected++;
+      posSum += sensorWeights[i];
+    }
+  }
+
+  unsigned long now = millis();
+  float dt = (now - lastTime) * 0.001;
+  lastTime = now;
+
+  int leftSpeed = baseSpeed;
+  int rightSpeed = baseSpeed;
+  MoveType currentMove = FORWARD;
+
+  // ===== ALL BLACK =====
+  if (detected == 5) {
+    setLeftMotor(0);
+    setRightMotor(0);
+    return;
+  }
+
+  // ===== ALL WHITE (line lost) =====
+  if (detected == 0) {
+    switch(lastMove) {
+      case FORWARD: leftSpeed=baseSpeed; rightSpeed=baseSpeed; break;
+      case SOFT_LEFT: leftSpeed=baseSpeed/4; rightSpeed=baseSpeed; break;
+      case SOFT_RIGHT: leftSpeed=baseSpeed; rightSpeed=baseSpeed/4; break;
+      case HARD_LEFT: leftSpeed=0; rightSpeed=baseSpeed; break;
+      case HARD_RIGHT: leftSpeed=baseSpeed; rightSpeed=0; break;
+      case PIVOT_LEFT: leftSpeed=-200; rightSpeed=200; break;
+      case PIVOT_RIGHT: leftSpeed=200; rightSpeed=-200; break;
+    }
+    setLeftMotor(leftSpeed);
+    setRightMotor(rightSpeed);
+    return;
+  }
+
+  // ===== PIVOT TURN (double sensors) =====
+  if ((sensor[0] && sensor[1])) {
+    leftSpeed=-200; rightSpeed=200; currentMove=PIVOT_LEFT;
+  } else if ((sensor[3] && sensor[4])) {
+    leftSpeed=200; rightSpeed=-200; currentMove=PIVOT_RIGHT;
+  }
+  // ===== HARD TURN (outer single sensors) =====
+  else if (sensor[0]) {
+    leftSpeed=0; rightSpeed=baseSpeed; currentMove=HARD_LEFT;
+  } else if (sensor[4]) {
+    leftSpeed=baseSpeed; rightSpeed=0; currentMove=HARD_RIGHT;
+  }
+  // ===== SOFT TURN (inner sensors) =====
+  else if (sensor[1]) {
+    leftSpeed=baseSpeed/4; rightSpeed=baseSpeed; currentMove=SOFT_LEFT;
+  } else if (sensor[3]) {
+    leftSpeed=baseSpeed; rightSpeed=baseSpeed/4; currentMove=SOFT_RIGHT;
+  }
+  // ===== CENTER SENSOR = FORWARD =====
+  else if (sensor[2]) {
+    // PID smoothing for small adjustments
+    float error = (float)posSum/detected;
+    integral += error*dt;
+    float derivative = (error - lastError)/dt;
+    float correction = Kp*error + Ki*integral + Kd*derivative;
+    lastError = error;
+
+    leftSpeed=constrain(baseSpeed - correction, 0, 255);
+    rightSpeed=constrain(baseSpeed + correction, 0, 255);
+    currentMove=FORWARD;
+  }
+
+  // ===== APPLY MOTOR SPEEDS =====
+  setLeftMotor(leftSpeed);
+  setRightMotor(rightSpeed);
+  lastMove=currentMove;
+
+  delay(5);
+}
