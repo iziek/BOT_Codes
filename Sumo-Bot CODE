@@ -10,17 +10,30 @@ const int pwmRight = 10;
 const int trigPin = 12;
 const int echoPin = 13;
 
+// IR sensor pins for edge detection (black line detected = LOW)
+const int sensorPins[5] = {2, 3, 4, 5, 6};
+
 // Motor speed settings
-const int baseSpeed = 120;        // Speed for turning in place during oscillation
+const int baseSpeed = 100;        // Speed for turning in place during oscillation
 const int attackSpeed = 255;      // Full speed attack
+const int retreatSpeed = 150;     // Speed for retreating on edge detection
 
 // Ultrasonic detection distance (cm)
-const int opponentDistanceThreshold = 60; // ~12 inches
+const int opponentDistanceThreshold = 30; // ~12 inches
 
 // Oscillation variables
 bool turnLeft = true;
 unsigned long lastTurnTime = 0;
-const unsigned long turnInterval = 500; // 1.5 seconds per turn
+const unsigned long leftTurnInterval = 1000;   // milliseconds (turn left duration)
+const unsigned long rightTurnInterval = 1000;  // milliseconds (turn right duration)
+
+// State machine definition
+enum RobotState { SEARCHING, RETREATING, ATTACKING };
+RobotState currentState = SEARCHING;
+
+unsigned long retreatStartTime = 0;
+const unsigned long retreatDuration = 300;  // retreat backward duration in ms
+const unsigned long turnDuration = 500;     // retreat turn duration in ms
 
 void setup() {
   pinMode(motorLeftForward, OUTPUT);
@@ -33,7 +46,13 @@ void setup() {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
+  for (int i = 0; i < 5; i++) {
+    pinMode(sensorPins[i], INPUT);
+  }
+
   Serial.begin(9600);
+
+  lastTurnTime = millis(); // Ensure full initial turn interval
 }
 
 void setLeftMotor(int speed) {
@@ -68,7 +87,7 @@ void setRightMotor(int speed) {
   }
 }
 
-// Read ultrasonic distance in cm
+// Ultrasonic read function (cm)
 long readUltrasonicDistance() {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
@@ -83,31 +102,89 @@ long readUltrasonicDistance() {
 void loop() {
   long distance = readUltrasonicDistance();
 
-  Serial.print("Distance: ");
-  Serial.print(distance);
-  Serial.println(" cm");
-
-  if (distance > 0 && distance <= opponentDistanceThreshold) {
-    // Enemy detected - move forward aggressively
-    Serial.println("Enemy detected - attacking");
-    setLeftMotor(attackSpeed);
-    setRightMotor(attackSpeed);
-    turnLeft = true; // reset oscillation direction
-  } else {
-    // No enemy detected - oscillate in place left and right
-    unsigned long currentTime = millis();
-    if (currentTime - lastTurnTime >= turnInterval) {
-      turnLeft = !turnLeft;
-      lastTurnTime = currentTime;
-    }
-    if (turnLeft) {
-      setLeftMotor(baseSpeed);
-      setRightMotor(-baseSpeed);
-    } else {
-      setLeftMotor(-baseSpeed);
-      setRightMotor(baseSpeed);
+  // Check for edge detection: any sensor detecting black line (LOW)
+  bool edgeDetected = false;
+  for (int i = 0; i < 5; i++) {
+    if (digitalRead(sensorPins[i]) == LOW) {
+      edgeDetected = true;
+      break;
     }
   }
 
-  delay(50);
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.print(" cm, Edge: ");
+  Serial.print(edgeDetected);
+  Serial.print(", State: ");
+  Serial.println(currentState);
+
+  unsigned long currentTime = millis();
+
+  switch (currentState) {
+    case SEARCHING:
+      if (edgeDetected) {
+        currentState = RETREATING;
+        retreatStartTime = currentTime;
+        setLeftMotor(-retreatSpeed);
+        setRightMotor(-retreatSpeed);
+      }
+      else if (distance > 0 && distance <= opponentDistanceThreshold) {
+        currentState = ATTACKING;
+        setLeftMotor(attackSpeed);
+        setRightMotor(attackSpeed);
+      }
+      else {
+        unsigned long interval = turnLeft ? leftTurnInterval : rightTurnInterval;
+        if (currentTime - lastTurnTime >= interval) {
+          turnLeft = !turnLeft;
+          lastTurnTime = currentTime;
+        }
+        if (turnLeft) {
+          setLeftMotor(baseSpeed);
+          setRightMotor(-baseSpeed);
+        } else {
+          setLeftMotor(-baseSpeed);
+          setRightMotor(baseSpeed);
+        }
+      }
+      break;
+
+    case RETREATING:
+      if (currentTime - retreatStartTime < retreatDuration) {
+        setLeftMotor(-retreatSpeed);
+        setRightMotor(-retreatSpeed);
+      }
+      else if (currentTime - retreatStartTime < retreatDuration + turnDuration) {
+        setLeftMotor(-retreatSpeed);
+        setRightMotor(retreatSpeed);
+      }
+      else {
+        setLeftMotor(0);
+        setRightMotor(0);
+        currentState = SEARCHING;
+        turnLeft = true;
+        lastTurnTime = currentTime;
+      }
+      break;
+
+    case ATTACKING:
+      if (edgeDetected) {
+        currentState = RETREATING;
+        retreatStartTime = currentTime;
+        setLeftMotor(-retreatSpeed);
+        setRightMotor(-retreatSpeed);
+      }
+      else if (distance == 0 || distance > opponentDistanceThreshold) {
+        currentState = SEARCHING;
+        turnLeft = true;
+        lastTurnTime = currentTime;
+      }
+      else {
+        setLeftMotor(attackSpeed);
+        setRightMotor(attackSpeed);
+      }
+      break;
+  }
+
+  delay(20);
 }
