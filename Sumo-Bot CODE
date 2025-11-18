@@ -19,7 +19,7 @@ const int attackSpeed = 255;      // Full speed attack
 const int retreatSpeed = 150;     // Speed for retreating on edge detection
 
 // Ultrasonic detection distance (cm)
-const int opponentDistanceThreshold = 30; // ~12 inches
+const int opponentDistanceThreshold = 60; // ~12 inches
 
 // Oscillation variables
 bool turnLeft = true;
@@ -32,8 +32,8 @@ enum RobotState { SEARCHING, RETREATING, ATTACKING };
 RobotState currentState = SEARCHING;
 
 unsigned long retreatStartTime = 0;
-const unsigned long retreatDuration = 300;  // retreat backward duration in ms
-const unsigned long turnDuration = 500;     // retreat turn duration in ms
+const unsigned long retreatDuration = 3000;  // retreat backward duration in ms
+const unsigned long turnDuration = 1000;     // retreat turn duration in ms
 
 void setup() {
   pinMode(motorLeftForward, OUTPUT);
