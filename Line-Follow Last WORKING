@@ -1,4 +1,4 @@
-// Motor pins
+// ==== Motor Pins ====
 const int motorLeftForward = A0;
 const int motorLeftBackward = A1;
 const int motorRightForward = A2;
@@ -6,25 +6,16 @@ const int motorRightBackward = A3;
 const int pwmLeft = 9;
 const int pwmRight = 10;
 
-// IR sensor pins (leftmost to rightmost)
+// ==== IR Sensors ====
 const int sensorPins[5] = {2, 3, 4, 5, 6};
+const int sensorWeights[5] = {-4, -2, 0, 2, 4};
 
-// Motor speed settings
+// ==== Motor Settings ====
 const int baseSpeed = 150;
 
-// PID parameters
-float Kp = 75.0;
-float Ki = 0.0;
-float Kd = 75.0;
-
-int lastDirection = 0; // -1 = left, 0 = forward, 1 = right
-
-// PID variables
-float error = 0;
-float lastError = 0;
-float integral = 0;
-
-unsigned long lastTime = 0;
+// ==== Last Move Tracking ====
+enum MoveType {FORWARD, SOFT_LEFT, SOFT_RIGHT, HARD_LEFT, HARD_RIGHT, PIVOT_LEFT, PIVOT_RIGHT};
+MoveType lastMove = FORWARD;
 
 void setup() {
   pinMode(motorLeftForward, OUTPUT);
@@ -34,142 +25,107 @@ void setup() {
   pinMode(pwmLeft, OUTPUT);
   pinMode(pwmRight, OUTPUT);
 
-  for (int i = 0; i < 5; i++) {
-    pinMode(sensorPins[i], INPUT);
-  }
+  for (int i = 0; i < 5; i++) pinMode(sensorPins[i], INPUT);
 
   Serial.begin(9600);
-  lastTime = millis();
 }
 
 void setLeftMotor(int speed) {
-  if (speed > 0) {
-    analogWrite(pwmLeft, speed);
-    digitalWrite(motorLeftForward, HIGH);
-    digitalWrite(motorLeftBackward, LOW);
-  } else if (speed < 0) {
-    analogWrite(pwmLeft, -speed);
-    digitalWrite(motorLeftForward, LOW);
-    digitalWrite(motorLeftBackward, HIGH);
-  } else {
-    analogWrite(pwmLeft, 0);
-    digitalWrite(motorLeftForward, LOW);
-    digitalWrite(motorLeftBackward, LOW);
-  }
+  int s = constrain(abs(speed), 0, 255);
+  analogWrite(pwmLeft, s);
+  digitalWrite(motorLeftForward, speed > 0);
+  digitalWrite(motorLeftBackward, speed < 0);
 }
 
 void setRightMotor(int speed) {
-  if (speed > 0) {
-    analogWrite(pwmRight, speed);
-    digitalWrite(motorRightForward, HIGH);
-    digitalWrite(motorRightBackward, LOW);
-  } else if (speed < 0) {
-    analogWrite(pwmRight, -speed);
-    digitalWrite(motorRightForward, LOW);
-    digitalWrite(motorRightBackward, HIGH);
-  } else {
-    analogWrite(pwmRight, 0);
-    digitalWrite(motorRightForward, LOW);
-    digitalWrite(motorRightBackward, LOW);
-  }
+  int s = constrain(abs(speed), 0, 255);
+  analogWrite(pwmRight, s);
+  digitalWrite(motorRightForward, speed > 0);
+  digitalWrite(motorRightBackward, speed < 0);
 }
 
 void loop() {
-  int sensorReadings[5];
-  int sensorWeights[5] = {-4, -2, 0, 2, 4};
-  int countDetected = 0;
-  long positionSum = 0;
+  int sensor[5];
+  int detected = 0;
+  int posSum = 0;
 
-  // Read sensors and invert for black line (LOW = line detected)
   for (int i = 0; i < 5; i++) {
-    sensorReadings[i] = digitalRead(sensorPins[i]) == LOW ? 1 : 0;
-    if (sensorReadings[i] == 1) {
-      positionSum += sensorWeights[i];
-      countDetected++;
+    sensor[i] = (digitalRead(sensorPins[i]) == LOW) ? 1 : 0;
+    if (sensor[i]) {
+      detected++;
+      posSum += sensorWeights[i];
     }
   }
 
-  // Handle all sensors detecting white or all black:
-  if (countDetected == 0 || countDetected == 5) {
-    // Stop both motors to avoid continuous running
+  int leftSpeed = baseSpeed;
+  int rightSpeed = baseSpeed;
+  MoveType currentMove = FORWARD;
+
+  // Stop if all sensors detect the line (possible intersection)
+  if (detected == 5) {
     setLeftMotor(0);
     setRightMotor(0);
-    Serial.println("All sensors white or black - Motors stopped");
     return;
   }
 
-  unsigned long now = millis();
-  float dt = (now - lastTime) / 1000.0;
-  lastTime = now;
-
-  // Sharp turn if sensor 1 or 5 activated alone
-  if (sensorReadings[0] == 1 && countDetected == 1) {
-    // Sharp left turn
-    setLeftMotor(-baseSpeed);
-    setRightMotor(baseSpeed);
-    lastDirection = -1;
-    Serial.println("Sharp Left (Sensor 1)");
+  // Lost line (no sensors detect line)
+  if (detected == 0) {
+    switch(lastMove) {
+      case FORWARD:
+        leftSpeed = baseSpeed; rightSpeed = baseSpeed;
+        break;
+      case SOFT_LEFT:
+        leftSpeed = baseSpeed / 3; rightSpeed = baseSpeed;
+        break;
+      case SOFT_RIGHT:
+        leftSpeed = baseSpeed; rightSpeed = baseSpeed / 3;
+        break;
+      case HARD_LEFT:
+        leftSpeed = 0; rightSpeed = baseSpeed;
+        break;
+      case HARD_RIGHT:
+        leftSpeed = baseSpeed; rightSpeed = 0;
+        break;
+      case PIVOT_LEFT:
+        leftSpeed = -255; rightSpeed = 255;
+        break;
+      case PIVOT_RIGHT:
+        leftSpeed = 255; rightSpeed = -255;
+        break;
+    }
+    setLeftMotor(leftSpeed);
+    setRightMotor(rightSpeed);
     return;
   }
-  if (sensorReadings[4] == 1 && countDetected == 1) {
-    // Sharp right turn
-    setLeftMotor(baseSpeed);
-    setRightMotor(-baseSpeed);
-    lastDirection = 1;
-    Serial.println("Sharp Right (Sensor 5)");
-    return;
+
+  // Pivot turns on outer sensors with reduced speed (softened pivot)
+  if (sensor[0]) {
+    leftSpeed = -baseSpeed;  // half speed backward
+    rightSpeed = baseSpeed / 2 ;  // half speed forward
+    currentMove = PIVOT_LEFT;
+  } else if (sensor[4]) {
+    leftSpeed = baseSpeed / 2;   // half speed forward
+    rightSpeed = -baseSpeed; // half speed backward
+    currentMove = PIVOT_RIGHT;
   }
-
-  // Calculate PID error
-  error = (float)positionSum / countDetected;
-
-  // PID calculations
-  integral += error * dt;
-  float derivative = (error - lastError) / dt;
-  float correction = Kp * error + Ki * integral + Kd * derivative;
-  lastError = error;
-
-  // Track last direction based on sensors 2, 3, 4 with soft turn logic
-  if (sensorReadings[1] == 1) {
-    lastDirection = -1;  // Soft left
-  }
-  else if (sensorReadings[2] == 1) {
-    lastDirection = 0;   // Forward
-  }
-  else if (sensorReadings[3] == 1) {
-    lastDirection = 1;   // Soft right
-  }
-
-  // Set motor speeds with PID and soft turns as one motor forward and other stopped
-  int leftSpeed, rightSpeed;
-
-  if (lastDirection == -1) {
-    // Soft left: left motor STOPPED, right motor full speed
-    leftSpeed = 0;
-    rightSpeed = baseSpeed;
+  // Increased turn on inner sensors with one motor stopped and the other full speed
+  else if (sensor[1]) {
+    leftSpeed = baseSpeed / 3;
+    rightSpeed = baseSpeed;  // full speed right motor for sharper left turn
+    currentMove = SOFT_LEFT;
+  } else if (sensor[3]) {
+    leftSpeed = baseSpeed;   // full speed left motor for sharper right turn
+    rightSpeed = baseSpeed / 3;
+    currentMove = SOFT_RIGHT;
   } 
-  else if (lastDirection == 1) {
-    // Soft right: left motor full speed, right motor STOPPED
-    leftSpeed = baseSpeed;
-    rightSpeed = 0;
-  }
+  // Center or mostly center sensor detected, go forward
   else {
-    // Forward with PID correction
-    leftSpeed = constrain(baseSpeed - (int)correction, 0, 255);
-    rightSpeed = constrain(baseSpeed + (int)correction, 0, 255);
+    leftSpeed = 200;
+    rightSpeed = 255;
+    currentMove = FORWARD;
   }
 
   setLeftMotor(leftSpeed);
   setRightMotor(rightSpeed);
-
-  Serial.print("Error: ");
-  Serial.print(error);
-  Serial.print(" Correction: ");
-  Serial.print(correction);
-  Serial.print(" LeftSpeed: ");
-  Serial.print(leftSpeed);
-  Serial.print(" RightSpeed: ");
-  Serial.println(rightSpeed);
-
-  delay(20);
+  lastMove = currentMove;
 }
